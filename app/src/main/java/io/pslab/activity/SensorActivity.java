@@ -209,7 +209,7 @@ public class SensorActivity extends GuideActivity {
             if (detectedSensors == null || detectedSensors.isEmpty()) {
                 tvSensorScan.setText(getString(R.string.not_connected));
             }
-
+            dataName.sort(String::compareTo);
             adapter.notifyDataSetChanged();
             buttonSensorAutoScan.setClickable(true);
         }
