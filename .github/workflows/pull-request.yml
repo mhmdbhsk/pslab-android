@@ -6,6 +6,10 @@ on:
       - master
       - development
 
+env:
+  ANDROID_EMULATOR_API: 34
+  ANDROID_EMULATOR_ARCH: x86_64
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,3 +44,15 @@ jobs:
           name: apk-files
           path: |
             app/build/outputs/apk/debug/app-debug.apk
+
+  screenshots:
+    name: Screenshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Android Screenshot Workflow
+        uses: ./.github/actions/screenshot-android
+        with:
+          ANDROID_EMULATOR_API: ${{ env.ANDROID_EMULATOR_API }}
+          ANDROID_EMULATOR_ARCH: ${{ env.ANDROID_EMULATOR_ARCH }}

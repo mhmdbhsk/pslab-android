@@ -8,6 +8,8 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ANDROID_EMULATOR_API: 34
+  ANDROID_EMULATOR_ARCH: x86_64
 
 jobs:
   build:
@@ -165,3 +167,15 @@ jobs:
         run: |
           echo "${{ steps.android-version.outputs.VERSION_CODE }}" > ./versionCode.txt
           gh release upload ${{ steps.run-release-drafter.outputs.tag_name }} apk/pslab-development-release.apk ./versionCode.txt --clobber
+
+  screenshots:
+    name: Screenshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Android Screenshot Workflow
+        uses: ./.github/actions/screenshot-android
+        with:
+          ANDROID_EMULATOR_API: ${{ env.ANDROID_EMULATOR_API }}
+          ANDROID_EMULATOR_ARCH: ${{ env.ANDROID_EMULATOR_ARCH }}
