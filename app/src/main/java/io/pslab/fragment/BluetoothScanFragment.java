@@ -1,5 +1,6 @@
 package io.pslab.fragment;
 
+import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
@@ -8,10 +9,12 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
@@ -19,6 +22,7 @@ import android.widget.ProgressBar;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
 import androidx.fragment.app.DialogFragment;
 
 import com.google.android.material.snackbar.Snackbar;
@@ -28,6 +32,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import io.pslab.R;
@@ -45,11 +50,13 @@ public class BluetoothScanFragment extends DialogFragment {
             String action = intent.getAction();
             if (BluetoothDevice.ACTION_FOUND.equals(action)) {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                if (device != null && !bluetoothDevices.contains(device)) {
+                if (device != null && !bluetoothDevices.contains(device) && ActivityCompat.checkSelfPermission(getActivity(), Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
                     String deviceName = device.getName();
                     deviceList.add(deviceName == null ? device.getAddress() : deviceName);
                     bluetoothDevices.add(device);
                     deviceListAdapter.notifyDataSetChanged();
+                } else {
+                    /**/
                 }
             }
         }
@@ -75,16 +82,19 @@ public class BluetoothScanFragment extends DialogFragment {
         scannedDevicesListView = rootView.findViewById(R.id.bluetooth_scanned_devices_list);
         deviceList = new ArrayList<>();
         bluetoothDevices = new ArrayList<>();
-        deviceListAdapter = new ArrayAdapter<>(getContext(), android.R.layout.simple_list_item_1, deviceList);
+        deviceListAdapter = new ArrayAdapter<>(requireContext(), android.R.layout.simple_list_item_1, deviceList);
         scannedDevicesListView.setAdapter(deviceListAdapter);
         bluetoothScanStopButton = rootView.findViewById(R.id.bluetooth_scan_stop_button);
 
-
         bluetoothScanStopButton.setOnClickListener(v -> {
             if (startScanning) {
-                if (bluetoothAdapter != null)
-                    bluetoothAdapter.cancelDiscovery();
-
+                if (bluetoothAdapter != null) {
+                    if (ActivityCompat.checkSelfPermission(requireActivity(), Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                        /**/
+                    } else {
+                        bluetoothAdapter.cancelDiscovery();
+                    }
+                }
                 scanProgressBar.setVisibility(View.GONE);
                 startScanning = false;
                 bluetoothScanStopButton.setText(getResources().getString(R.string.bluetooth_scan_text));
@@ -95,13 +105,13 @@ public class BluetoothScanFragment extends DialogFragment {
 
 
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-        getContext().registerReceiver(broadcastReceiver, filter);
+        requireContext().registerReceiver(broadcastReceiver, filter);
 
         scannedDevicesListView.setOnItemClickListener((parent, view, position, id) -> {
-            CustomSnackBar.showSnackBar(getActivity().findViewById(android.R.id.content),
+            CustomSnackBar.showSnackBar(requireActivity().findViewById(android.R.id.content),
                     bluetoothDevices.get(position).getAddress(), null, null, Snackbar.LENGTH_SHORT);
             bluetoothDevice = bluetoothDevices.get(position);
-            getDialog().cancel();
+            Objects.requireNonNull(getDialog()).cancel();
             connectBluetooth();
         });
         scanDevices();
@@ -109,7 +119,7 @@ public class BluetoothScanFragment extends DialogFragment {
     }
 
     @Override
-    public void onCancel(DialogInterface dialog) {
+    public void onCancel(@NonNull DialogInterface dialog) {
         super.onCancel(dialog);
     }
 
@@ -119,7 +129,7 @@ public class BluetoothScanFragment extends DialogFragment {
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (bluetoothAdapter == null) {
             startScanning = false;
-            CustomSnackBar.showSnackBar(getActivity().findViewById(android.R.id.content),
+            CustomSnackBar.showSnackBar(requireActivity().findViewById(android.R.id.content),
                     getString(R.string.bluetooth_not_supported), null, null, Snackbar.LENGTH_SHORT);
         } else {
             if (!bluetoothAdapter.isEnabled()) {
@@ -132,7 +142,11 @@ public class BluetoothScanFragment extends DialogFragment {
             } else {
                 startScanning = true;
                 scannedDevicesListView.setClickable(false);
-                bluetoothAdapter.startDiscovery();
+                if (ActivityCompat.checkSelfPermission(requireActivity(), Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                    /**/
+                } else {
+                    bluetoothAdapter.startDiscovery();
+                }
                 scanProgressBar.setVisibility(View.VISIBLE);
                 bluetoothScanStopButton.setText(getResources().getString(R.string.bluetooth_stop_text));
             }
@@ -142,19 +156,23 @@ public class BluetoothScanFragment extends DialogFragment {
     @Override
     public void onResume() {
         super.onResume();
-        ViewGroup.LayoutParams params = getDialog().getWindow().getAttributes();
+        WindowManager.LayoutParams params = Objects.requireNonNull(Objects.requireNonNull(getDialog()).getWindow()).getAttributes();
         params.height = ViewGroup.LayoutParams.MATCH_PARENT;
         params.width = ViewGroup.LayoutParams.MATCH_PARENT;
-        getDialog().getWindow().setAttributes((android.view.WindowManager.LayoutParams) params);
+        getDialog().getWindow().setAttributes(params);
     }
 
     private void connectBluetooth() {
         try {
             UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"); //Standard SerialPortService ID
-            mSocket = bluetoothDevice.createInsecureRfcommSocketToServiceRecord(uuid);
-            mSocket.connect();
-            mOutputStream = mSocket.getOutputStream();
-            mInputStream = mSocket.getInputStream();
+            if (ActivityCompat.checkSelfPermission(requireActivity(), Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                /**/
+            } else {
+                mSocket = bluetoothDevice.createInsecureRfcommSocketToServiceRecord(uuid);
+                mSocket.connect();
+                mOutputStream = mSocket.getOutputStream();
+                mInputStream = mSocket.getInputStream();
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }

@@ -34,6 +34,7 @@ import io.pslab.R;
 import io.pslab.activity.MainActivity;
 import io.pslab.others.CustomSnackBar;
 import io.pslab.others.InitializationVariable;
+import io.pslab.others.PSLabPermission;
 import io.pslab.others.ScienceLabCommon;
 
 public class HomeFragment extends Fragment {
@@ -66,6 +67,7 @@ public class HomeFragment extends Fragment {
     TextView bluetoothWifiOption;
     private boolean deviceFound = false, deviceConnected = false;
     private Unbinder unbinder;
+    private PSLabPermission psLabPermission;
 
     public static HomeFragment newInstance(boolean deviceConnected, boolean deviceFound) {
         HomeFragment homeFragment = new HomeFragment();
@@ -81,6 +83,7 @@ public class HomeFragment extends Fragment {
             booleanVariable = new InitializationVariable();
         }
         booleanVariable.setVariable(true);
+        psLabPermission = PSLabPermission.getInstance();
     }
 
     @Nullable
@@ -122,6 +125,7 @@ public class HomeFragment extends Fragment {
             tvDeviceStatus.setText(getString(R.string.device_not_found));
         }
 
+        psLabPermission.checkPermissions(requireActivity(), PSLabPermission.BLUETOOTH_PERMISSION);
         /*
          * The null-checks in the OnClickListener may seem unnecessary, but even though the
          * respective variables are initialized before the setter is called, they may contain null

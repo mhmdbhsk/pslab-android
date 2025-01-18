@@ -5,8 +5,6 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.pm.PackageManager;
-import android.util.Log;
-import android.view.View;
 import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
@@ -16,7 +14,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import io.pslab.activity.SplashActivity;
 
 /**
  * Created by Padmal on 11/3/18.
@@ -24,23 +21,31 @@ import io.pslab.activity.SplashActivity;
 
 public class PSLabPermission {
 
-    private String[] allPermissions = new String[] {
+    private String[] allPermissions = new String[]{
             Manifest.permission.WRITE_EXTERNAL_STORAGE,
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.ACCESS_FINE_LOCATION
     };
 
-    private String[] csvPermissions = new String[] {
+    private String[] csvPermissions = new String[]{
             Manifest.permission.ACCESS_FINE_LOCATION
     };
 
-    private String[] logPermissions = new String[] {
+    private String[] logPermissions = new String[]{
             Manifest.permission.WRITE_EXTERNAL_STORAGE
     };
 
-    private String[] mapPermissions = new String[] {
+    private String[] mapPermissions = new String[]{
             Manifest.permission.ACCESS_FINE_LOCATION
     };
+
+    private String[] bluetoothPermission = new String[]{
+            Manifest.permission.BLUETOOTH,
+            Manifest.permission.BLUETOOTH_ADMIN,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+    };
+
     List<String> listPermissionsNeeded = new ArrayList<>();
 
     public static final int ALL_PERMISSION = 100;
@@ -48,6 +53,7 @@ public class PSLabPermission {
     public static final int MAP_PERMISSION = 102;
     public static final int GPS_PERMISSION = 103;
     public static final int CSV_PERMISSION = 104;
+    public static final int BLUETOOTH_PERMISSION = 105;
 
     public static int REQUEST_CODE = 0;
 
@@ -60,8 +66,10 @@ public class PSLabPermission {
     }
 
     private PSLabPermission() {/**/}
+
     public boolean checkPermissions(Activity activity, int mode) {
         if (mode == ALL_PERMISSION) {
+            listPermissionsNeeded = new ArrayList<>();
             for (String permission : allPermissions) {
                 if (ContextCompat.checkSelfPermission(activity, permission)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -69,6 +77,7 @@ public class PSLabPermission {
                 }
             }
         } else if (mode == LOG_PERMISSION) {
+            listPermissionsNeeded = new ArrayList<>();
             for (String permission : logPermissions) {
                 if (ContextCompat.checkSelfPermission(activity, permission)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -76,6 +85,7 @@ public class PSLabPermission {
                 }
             }
         } else if (mode == MAP_PERMISSION) {
+            listPermissionsNeeded = new ArrayList<>();
             for (String permission : mapPermissions) {
                 if (ContextCompat.checkSelfPermission(activity, permission)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -83,6 +93,7 @@ public class PSLabPermission {
                 }
             }
         } else if (mode == GPS_PERMISSION) {
+            listPermissionsNeeded = new ArrayList<>();
             for (String permission : mapPermissions) {
                 if (ContextCompat.checkSelfPermission(activity, permission)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -90,7 +101,16 @@ public class PSLabPermission {
                 }
             }
         } else if (mode == CSV_PERMISSION) {
+            listPermissionsNeeded = new ArrayList<>();
             for (String permission : csvPermissions) {
+                if (ContextCompat.checkSelfPermission(activity, permission)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    listPermissionsNeeded.add(permission);
+                }
+            }
+        } else if (mode == BLUETOOTH_PERMISSION) {
+            listPermissionsNeeded = new ArrayList<>();
+            for (String permission : bluetoothPermission) {
                 if (ContextCompat.checkSelfPermission(activity, permission)
                         != PackageManager.PERMISSION_GRANTED) {
                     listPermissionsNeeded.add(permission);
@@ -99,7 +119,7 @@ public class PSLabPermission {
         }
         PERMISSIONS_REQUIRED = listPermissionsNeeded.size();
         if (!listPermissionsNeeded.isEmpty()) {
-            for(String permission : listPermissionsNeeded) {
+            for (String permission : listPermissionsNeeded) {
                 if (Objects.equals(permission, Manifest.permission.ACCESS_FINE_LOCATION)) {
                     AlertDialog.Builder alert = new AlertDialog.Builder(activity);
                     alert.setTitle("Location Permission Disclosure");
@@ -140,6 +160,8 @@ public class PSLabPermission {
                     });
                     AlertDialog alertDialog = alert.create();
                     alertDialog.show();
+                } else if (Objects.equals(permission, Manifest.permission.BLUETOOTH_SCAN)) {
+                    ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT}, ++REQUEST_CODE);
                 }
             }
             return false;
