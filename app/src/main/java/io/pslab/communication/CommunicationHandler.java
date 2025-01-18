@@ -69,8 +69,7 @@ public class CommunicationHandler {
         }
         if (mUsbDevice.getProductId() == PSLAB_PRODUCT_ID_V6 && mUsbDevice.getVendorId() == PSLAB_VENDOR_ID_V6) {
             PSLAB_VERSION = 6;
-        }
-        else {
+        } else {
             PSLAB_VERSION = 5;
         }
         connected = true;
@@ -102,7 +101,7 @@ public class CommunicationHandler {
         }
         int numBytesRead = 0;
         int readNow;
-        Log.v(TAG, "TO read : " + bytesToBeRead);
+        Log.v(TAG, "To read : " + bytesToBeRead);
         int bytesToBeReadTemp = bytesToBeRead;
         while (numBytesRead < bytesToBeRead) {
             readNow = port.read(mReadBuffer, bytesToBeReadTemp, timeoutMillis);
@@ -123,7 +122,7 @@ public class CommunicationHandler {
     public int readCdcAcm(byte[] dest, int bytesToBeRead, int timeoutMillis) throws IOException {
         int numBytesRead = 0;
         int readNow;
-        Log.v(TAG, "TO read : " + bytesToBeRead);
+        Log.v(TAG, "To read : " + bytesToBeRead);
         int bytesToBeReadTemp = bytesToBeRead;
         while (numBytesRead < bytesToBeRead) {
             readNow = mConnection.bulkTransfer(mUsbDevice.getInterface(1).getEndpoint(1), mReadBuffer, bytesToBeReadTemp, timeoutMillis);

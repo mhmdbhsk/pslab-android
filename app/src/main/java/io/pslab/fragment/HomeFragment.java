@@ -22,12 +22,17 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
+import com.google.android.material.snackbar.Snackbar;
+
 import java.io.IOException;
+import java.util.Objects;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.Unbinder;
 import io.pslab.R;
+import io.pslab.activity.MainActivity;
+import io.pslab.others.CustomSnackBar;
 import io.pslab.others.InitializationVariable;
 import io.pslab.others.ScienceLabCommon;
 
@@ -97,7 +102,22 @@ public class HomeFragment extends Fragment {
             }
             imgViewDeviceStatus.setImageResource(R.drawable.icons8_usb_connected_100);
             tvDeviceStatus.setText(getString(R.string.device_connected_successfully));
-        } else {
+        }
+        else if (!deviceFound && deviceConnected) {
+            tvConnectMsg.setVisibility(View.GONE);
+            try {
+                tvVersion.setText(scienceLab.getVersion());
+                tvVersion.setVisibility(View.VISIBLE);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            imgViewDeviceStatus.setImageResource(R.drawable.icons8_wifi_connected_100);
+            tvDeviceStatus.setText(getString(R.string.device_connected_successfully));
+            requireActivity().invalidateOptionsMenu();
+            CustomSnackBar.showSnackBar(requireActivity().findViewById(android.R.id.content),
+                    getString(R.string.device_connected_successfully), null, null, Snackbar.LENGTH_SHORT);
+        }
+        else {
             imgViewDeviceStatus.setImageResource(R.drawable.icons_usb_disconnected_100);
             tvDeviceStatus.setText(getString(R.string.device_not_found));
         }
