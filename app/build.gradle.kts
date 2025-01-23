@@ -10,12 +10,12 @@ val GITHUB_BUILD = System.getenv("GITHUB_ACTIONS") == "true" && KEYSTORE_FILE.ex
 
 android {
     namespace = "io.pslab"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "io.pslab"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 35
         versionCode = System.getenv("VERSION_CODE")?.toInt() ?: 1
         versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
         resourceConfigurations += setOf("en", "ru", "ar", "si", "pl")
@@ -66,7 +66,7 @@ dependencies {
     // Android stock libraries
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.cardview:cardview:1.0.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.preference:preference:1.2.1")
     implementation("androidx.browser:browser:1.8.0")
