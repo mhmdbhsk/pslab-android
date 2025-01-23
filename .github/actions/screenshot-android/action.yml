@@ -68,7 +68,7 @@ runs:
     - name: Setup Fastlane
       shell: bash
       run: |
-        git clone --branch=fastlane --depth=1 https://${{ github.repository_owner }}:${{ github.token }}@github.com/${{ github.repository }} fastlane
+        git clone --branch=fastlane-android --depth=1 https://${{ github.repository_owner }}:${{ github.token }}@github.com/${{ github.repository }} fastlane
 
     - name: Create Android Screenshots
       uses: reactivecircus/android-emulator-runner@v2.33.0
