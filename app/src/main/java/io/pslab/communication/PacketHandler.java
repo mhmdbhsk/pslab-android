@@ -2,16 +2,18 @@ package io.pslab.communication;
 
 import android.util.Log;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
-import io.pslab.interfaces.HttpCallback;
 import io.pslab.others.ScienceLabCommon;
 
 /**
@@ -28,17 +30,22 @@ public class PacketHandler {
     private CommunicationHandler mCommunicationHandler = null;
     public static String version = "";
     private CommandsProto mCommandsProto;
-    private int timeout = 500, VERSION_STRING_LENGTH = 15;
+    private int timeout = 500, VERSION_STRING_LENGTH = 8, FW_VERSION_LENGTH = 3;
+    public static int PSLAB_FW_VERSION = 0;
     ByteBuffer burstBuffer = ByteBuffer.allocate(2000);
-    private HttpAsyncTask httpAsyncTask;
+    private SocketClient socketClient;
+    ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public PacketHandler(int timeout, CommunicationHandler communicationHandler) {
         this.loadBurst = false;
         this.connected = false;
         this.timeout = timeout;
         this.mCommandsProto = new CommandsProto();
-        this.mCommunicationHandler = communicationHandler;
-        connected = (mCommunicationHandler.isConnected() || ScienceLabCommon.isWifiConnected());
+        socketClient = SocketClient.getInstance();
+        if (communicationHandler != null) {
+            this.mCommunicationHandler = communicationHandler;
+        }
+        connected = (ScienceLabCommon.isWifiConnected() || mCommunicationHandler.isConnected());
     }
 
     public boolean isConnected() {
@@ -52,11 +59,48 @@ public class PacketHandler {
             sendByte(mCommandsProto.GET_VERSION);
             // Read "<PSLAB Version String>\n"
             commonRead(VERSION_STRING_LENGTH + 1);
-            version = new String(Arrays.copyOfRange(buffer, 0, VERSION_STRING_LENGTH), Charset.forName("UTF-8"));
+            // Only use first line, just like in the Python implementation.
+            version = new BufferedReader(
+                    new InputStreamReader(
+                            new ByteArrayInputStream(buffer, 0, VERSION_STRING_LENGTH),
+                            StandardCharsets.UTF_8))
+                    .readLine();
         } catch (IOException e) {
             Log.e("Error in Communication", e.toString());
         }
         return version;
+    }
+
+    public int getFirmwareVersion() {
+        try {
+            sendByte(mCommandsProto.COMMON);
+            sendByte(mCommandsProto.GET_FW_VERSION);
+            int numByteRead = commonRead(FW_VERSION_LENGTH);
+            if (numByteRead == 1) {
+                return 2;
+            } else {
+                return buffer[0];
+            }
+        } catch (IOException e) {
+            Log.e("Error in Communication", e.toString());
+        }
+        return 0;
+    }
+
+    public String readLine() {
+        String line = "";
+        try {
+            commonRead(CommunicationHandler.DEFAULT_READ_BUFFER_SIZE);
+            line = new BufferedReader(
+                    new InputStreamReader(
+                            new ByteArrayInputStream(buffer, 0, CommunicationHandler.DEFAULT_READ_BUFFER_SIZE),
+                            StandardCharsets.UTF_8))
+                    .readLine();
+            return line;
+        } catch (IOException e) {
+            Log.e("Error in Communication", e.toString());
+        }
+        return line;
     }
 
     public void sendByte(int val) throws IOException {
@@ -204,51 +248,60 @@ public class PacketHandler {
         return new byte[]{-1};
     }
 
-    private int commonRead(int bytesToRead) throws IOException {
+    public int commonRead(int bytesToRead) throws IOException {
         final int[] bytesRead = {0};
-        if (mCommunicationHandler.isConnected()) {
+        if (mCommunicationHandler != null && mCommunicationHandler.isConnected()) {
             bytesRead[0] = mCommunicationHandler.read(buffer, bytesToRead, timeout);
         } else if (ScienceLabCommon.isWifiConnected()) {
-            httpAsyncTask = new HttpAsyncTask(ScienceLabCommon.getEspIP(), new HttpCallback<JSONObject>() {
-                @Override
-                public void success(JSONObject jsonObject) {
-                    try {
-                        //Server will send byte array
-                        buffer = (byte[])jsonObject.get("data");
-                        bytesRead[0] = buffer.length;
-                    } catch (JSONException e) {
-                        e.printStackTrace();
-                    }
-                }
-
-                @Override
-                public void error(Exception e) {
+            Future<Void> future = executor.submit(() -> {
+                try {
+                    socketClient.read(bytesToRead);
+                    System.arraycopy(socketClient.getReceivedData(), 0, buffer, 0, bytesToRead);
+                    bytesRead[0] = bytesToRead;
+                } catch (Exception e) {
                     Log.e(TAG, "Error reading data over ESP");
                 }
+                return null;
             });
-            httpAsyncTask.execute(new byte[]{});
+            try {
+                future.get();
+            } catch (Exception e) {
+                throw new IOException("Error reading data", e);
+            }
         }
         return bytesRead[0];
     }
 
-    private void commonWrite(byte[] data) throws IOException {
-        if (mCommunicationHandler.isConnected()) {
+    public void commonWrite(byte[] data) throws IOException {
+        if (mCommunicationHandler != null && mCommunicationHandler.isConnected()) {
             mCommunicationHandler.write(data, timeout);
         } else if (ScienceLabCommon.isWifiConnected()) {
-            httpAsyncTask = new HttpAsyncTask(ScienceLabCommon.getEspIP(), new HttpCallback<JSONObject>() {
-                @Override
-                public void success(JSONObject jsonObject) {
-                    Log.v(TAG, "write response:" + jsonObject.toString());
-                }
-
-                @Override
-                public void error(Exception e) {
+            Future<Void> future = executor.submit(() -> {
+                try {
+                    socketClient.write(data);
+                } catch (Exception e) {
                     Log.e(TAG, "Error writing data over ESP");
                 }
+                return null;
             });
-
-            httpAsyncTask.execute(data);
+            try {
+                future.get();
+            } catch (Exception e) {
+                throw new IOException("Error writing data", e);
+            }
         }
+    }
 
+    public void close() {
+        try {
+            if (mCommunicationHandler != null) {
+                mCommunicationHandler.close();
+            } else {
+                socketClient.closeConnection();
+            }
+            executor.shutdown();
+        } catch (Exception e) {
+            Log.e(TAG, "Error closing connection");
+        }
     }
 }

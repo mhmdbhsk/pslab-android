@@ -972,7 +972,7 @@ public class LALogicLinesFragment extends Fragment {
                 delayThread(1000);
                 LinkedHashMap<String, Integer> data = scienceLab.getLAInitialStates();
                 delayThread(1000);
-                holder = scienceLab.fetchLAChannel(channelNumber, data);
+                holder = scienceLab.fetchLAChannel(channelNumber, data, 1);
 
             } catch (NullPointerException e) {
                 cancel(true);
@@ -1105,9 +1105,9 @@ public class LALogicLinesFragment extends Fragment {
                 delayThread(1000);
                 LinkedHashMap<String, Integer> data = scienceLab.getLAInitialStates();
                 delayThread(1000);
-                holder1 = scienceLab.fetchLAChannel(channelNumber1, data);
+                holder1 = scienceLab.fetchLAChannel(channelNumber1, data, 2);
                 delayThread(1000);
-                holder2 = scienceLab.fetchLAChannel(channelNumber2, data);
+                holder2 = scienceLab.fetchLAChannel(channelNumber2, data, 2);
 
             } catch (NullPointerException e) {
                 cancel(true);
@@ -1235,16 +1235,21 @@ public class LALogicLinesFragment extends Fragment {
                             modes.add(EVERY_EDGE);
                     }
                 }
+                modes.add(EVERY_EDGE);
+                ArrayList<Boolean> triggerChannel = new ArrayList<>();
+                triggerChannel.add(true);
+                triggerChannel.add(true);
+                triggerChannel.add(true);
 
-                scienceLab.startThreeChannelLA(modes, null, null);
+                scienceLab.startFourChannelLA(null, null, modes, null, triggerChannel);
                 delayThread(1000);
                 LinkedHashMap<String, Integer> data = scienceLab.getLAInitialStates();
                 delayThread(1000);
-                holder1 = scienceLab.fetchLAChannel(channelNumber1, data);
+                holder1 = scienceLab.fetchLAChannel(channelNumber1, data, 3);
                 delayThread(1000);
-                holder2 = scienceLab.fetchLAChannel(channelNumber2, data);
+                holder2 = scienceLab.fetchLAChannel(channelNumber2, data, 3);
                 delayThread(1000);
-                holder3 = scienceLab.fetchLAChannel(channelNumber3, data);
+                holder3 = scienceLab.fetchLAChannel(channelNumber3, data, 3);
 
             } catch (NullPointerException e) {
                 cancel(true);
@@ -1386,13 +1391,13 @@ public class LALogicLinesFragment extends Fragment {
                 delayThread(1000);
                 LinkedHashMap<String, Integer> data = scienceLab.getLAInitialStates();
                 delayThread(1000);
-                holder1 = scienceLab.fetchLAChannel(channelNumber1, data);
+                holder1 = scienceLab.fetchLAChannel(channelNumber1, data, 4);
                 delayThread(1000);
-                holder2 = scienceLab.fetchLAChannel(channelNumber2, data);
+                holder2 = scienceLab.fetchLAChannel(channelNumber2, data, 4);
                 delayThread(1000);
-                holder3 = scienceLab.fetchLAChannel(channelNumber3, data);
+                holder3 = scienceLab.fetchLAChannel(channelNumber3, data, 4);
                 delayThread(1000);
-                holder4 = scienceLab.fetchLAChannel(channelNumber4, data);
+                holder4 = scienceLab.fetchLAChannel(channelNumber4, data, 4);
 
             } catch (NullPointerException e) {
                 cancel(true);

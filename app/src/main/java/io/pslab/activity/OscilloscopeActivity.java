@@ -1,6 +1,7 @@
 package io.pslab.activity;
 
 
+import static io.pslab.others.AudioJack.SAMPLING_RATE;
 import static io.pslab.others.MathUtils.map;
 
 import android.annotation.SuppressLint;
@@ -25,6 +26,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.IdRes;
 import androidx.annotation.NonNull;
@@ -32,6 +34,9 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.DefaultItemAnimator;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.github.mikephil.charting.charts.LineChart;
 import com.github.mikephil.charting.components.Legend;
@@ -51,6 +56,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -58,6 +64,7 @@ import butterknife.BindView;
 import butterknife.ButterKnife;
 import io.pslab.R;
 import io.pslab.activity.guide.GuideActivity;
+import io.pslab.adapters.OscilloscopeMeasurementsAdapter;
 import io.pslab.communication.AnalyticsClass;
 import io.pslab.communication.ScienceLab;
 import io.pslab.fragment.ChannelParametersFragment;
@@ -73,13 +80,15 @@ import io.pslab.others.CSVLogger;
 import io.pslab.others.CustomSnackBar;
 import io.pslab.others.GPSLogger;
 import io.pslab.others.LocalDataLog;
+import io.pslab.others.OscilloscopeAxisScale;
+import io.pslab.others.OscilloscopeMeasurements;
 import io.pslab.others.Plot2D;
 import io.pslab.others.ScienceLabCommon;
 import io.realm.Realm;
 import io.realm.RealmObject;
 import io.realm.RealmResults;
 
-public class OscilloscopeActivity extends GuideActivity implements View.OnClickListener {
+public class OscilloscopeActivity extends GuideActivity implements View.OnClickListener, OscilloscopeAxisScale.AxisScaleSetListener {
 
     private static final CSVDataLine CSV_HEADER = new CSVDataLine()
             .add("Timestamp")
@@ -109,26 +118,26 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
     public int samples;
     public double timeGap;
     public double timebase;
-    public double xAxisScale = 875f;
+    public double maxTimebase = 102.4f;
     public boolean isCH1Selected;
     public boolean isCH2Selected;
     public boolean isCH3Selected;
     public boolean isMICSelected;
-    public boolean isInBuiltMicSelected;
+    public static boolean isInBuiltMicSelected;
     public boolean isAudioInputSelected;
     public boolean isTriggerSelected;
-    public boolean isFourierTransformSelected;
+    public boolean isTriggered;
+    private boolean isFourierTransformSelected;
     public boolean isXYPlotSelected;
     private boolean isDataAnalysisFragSelected;
     public boolean sineFit;
     public boolean squareFit;
-    public boolean isCH1FrequencyRequired;
-    public boolean isCH2FrequencyRequired;
     public String triggerChannel;
+    public String triggerMode;
     public String curveFittingChannel1;
     public String curveFittingChannel2;
-    public String xyPlotXAxisChannel;
-    public String xyPlotYAxisChannel;
+    public HashMap<String, Double> xOffsets;
+    public HashMap<String, Double> yOffsets;
     public double trigger;
     public Plot2D graph;
     @BindView(R.id.layout_dock_os1)
@@ -155,6 +164,8 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
     TextView xyPlotTextView;
     @BindView(R.id.parent_layout)
     View parentLayout;
+    @BindView(R.id.recyclerView)
+    RecyclerView measurementsList;
     private Fragment channelParametersFragment;
     private Fragment timebaseTriggerFragment;
     private Fragment dataAnalysisFragment;
@@ -174,6 +185,8 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
     private volatile boolean monitor = true;
     private double maxAmp, maxFreq;
     private boolean isRecording = false;
+    private boolean isRunning = true;
+    private boolean isMeasurementsChecked = false;
     private Realm realm;
     public RealmResults<OscilloscopeData> recordedOscilloscopeData;
     private CSVLogger csvLogger;
@@ -191,15 +204,23 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
     private double lon;
     public boolean isPlaybackFourierChecked = false;
     private HashMap<String, Integer> channelIndexMap;
-    private final Integer[] channelColors = {Color.CYAN, Color.GREEN, Color.WHITE, Color.MAGENTA};
+    public static final Integer[] channelColors = {Color.CYAN, Color.GREEN, Color.WHITE, Color.MAGENTA};
     private final String[] loggingYdata = new String[4];
     public String xyPlotAxis1 = "CH1";
     public String xyPlotAxis2 = "CH2";
     private boolean isPlayingback = false;
     private boolean isPlaying = false;
     private MenuItem playMenu;
+    private ArrayList<ArrayList<Entry>> dataEntries = new ArrayList<>();
+    private String[] dataParamsChannels;
 
-    private enum CHANNEL {CH1, CH2, CH3, MIC}
+    private OscilloscopeAxisScale axisScale;
+
+    public enum CHANNEL {CH1, CH2, CH3, MIC}
+
+    private enum MODE {RISING, FALLING, DUAL}
+
+    public enum ChannelMeasurements {FREQUENCY, PERIOD, AMPLITUDE, POSITIVE_PEAK, NEGATIVE_PEAK}
 
     public OscilloscopeActivity() {
         super(R.layout.activity_oscilloscope);
@@ -210,7 +231,19 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         super.onCreate(savedInstanceState);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        final int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+        getWindow().getDecorView().setSystemUiVisibility(flags);
+        final View decorView = getWindow().getDecorView();
+        decorView.setOnSystemUiVisibilityChangeListener(i -> {
+            if ((i & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
+                decorView.setSystemUiVisibility(flags);
+            }
+        });
         ButterKnife.bind(this);
 
         removeStatusBar();
@@ -245,17 +278,28 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         timebase = 875;
         samples = 512;
         timeGap = 2;
+
+        axisScale = new OscilloscopeAxisScale();
+        axisScale.addAxisScaledListener(this);
+
+        xOffsets = new HashMap<>();
+        xOffsets.put(CHANNEL.CH1.toString(), 0.0);
+        xOffsets.put(CHANNEL.CH2.toString(), 0.0);
+        xOffsets.put(CHANNEL.CH3.toString(), 0.0);
+        xOffsets.put(CHANNEL.MIC.toString(), 0.0);
+        yOffsets = new HashMap<>();
+        yOffsets.put(CHANNEL.CH1.toString(), 0.0);
+        yOffsets.put(CHANNEL.CH2.toString(), 0.0);
+        yOffsets.put(CHANNEL.CH3.toString(), 0.0);
+        yOffsets.put(CHANNEL.MIC.toString(), 0.0);
+
         sineFit = true;
         squareFit = false;
         isDataAnalysisFragSelected = false;
         graph = new Plot2D(this, new float[]{}, new float[]{}, 1);
         curveFittingChannel1 = "None";
         curveFittingChannel2 = "None";
-        xyPlotXAxisChannel = CHANNEL.CH1.toString();
-        xyPlotYAxisChannel = CHANNEL.CH2.toString();
         analyticsClass = new AnalyticsClass();
-        isCH1FrequencyRequired = false;
-        isCH2FrequencyRequired = false;
 
         Display display = getWindowManager().getDefaultDisplay();
         Point size = new Point();
@@ -284,178 +328,71 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         dataAnalysisTextView.setOnClickListener(this);
         xyPlotTextView.setOnClickListener(this);
 
+        measurementsList = findViewById(R.id.recyclerView);
+
         chartInit();
 
         final Runnable runnable = new Runnable() {
+
+            private final List<String> channels = new ArrayList<>();
 
             @Override
             public void run() {
                 //Thread to check which checkbox is enabled
                 while (monitor) {
-                    if (isInBuiltMicSelected && audioJack == null) {
-                        audioJack = new AudioJack("input");
-                    }
+                    if (isRunning) {
+                        if (isInBuiltMicSelected && audioJack == null) {
+                            audioJack = new AudioJack("input");
+                        }
 
-                    if (scienceLab.isConnected() && isCH1Selected && !isCH2Selected && !isCH3Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH1.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
+                        channels.clear();
+
+                        if (scienceLab.isConnected() && isXYPlotSelected) {
+                            xyPlotTask = new XYPlotTask();
+                            xyPlotTask.execute(xyPlotAxis1, xyPlotAxis2);
+                            synchronized (lock) {
+                                try {
+                                    lock.wait();
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        } else {
+                            if (scienceLab.isConnected()) {
+                                if (isCH1Selected) {
+                                    channels.add(CHANNEL.CH1.toString());
+                                }
+                                if (isCH2Selected) {
+                                    channels.add(CHANNEL.CH2.toString());
+                                }
+                                if (isCH3Selected) {
+                                    channels.add(CHANNEL.CH3.toString());
+                                }
+                            }
+                            if (isAudioInputSelected && isInBuiltMicSelected || (scienceLab.isConnected() && isMICSelected)) {
+                                channels.add(CHANNEL.MIC.toString());
+                            }
+                            if (!channels.isEmpty()) {
+                                captureTask = new CaptureTask();
+                                captureTask.execute(channels.toArray(new String[0]));
+                                synchronized (lock) {
+                                    try {
+                                        lock.wait();
+                                    } catch (InterruptedException e) {
+                                        e.printStackTrace();
+                                    }
+                                }
                             }
                         }
-                    }
 
-                    if (scienceLab.isConnected() && isCH2Selected && !isCH1Selected && !isCH3Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH2.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
+                        if ((!isInBuiltMicSelected) && audioJack != null) {
+                            audioJack.release();
+                            audioJack = null;
                         }
-                    }
 
-                    if (scienceLab.isConnected() && isCH3Selected && !isCH1Selected && !isCH2Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH3.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
+                        if (!(((isCH1Selected || isCH2Selected || isCH3Selected || isMICSelected) && scienceLab.isConnected()) || isInBuiltMicSelected) && !mChart.isEmpty()) {
+                            mChart.post(() -> mChart.clearValues());
                         }
-                    }
-
-                    if (isAudioInputSelected && !isCH1Selected && !isCH2Selected && !isCH3Selected && !isXYPlotSelected) {
-                        if (isInBuiltMicSelected || (isMICSelected && scienceLab.isConnected())) {
-                            captureTask = new CaptureTask();
-                            captureTask.execute(CHANNEL.MIC.toString());
-                        }
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isCH1Selected && isCH2Selected && !isCH3Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH1.toString(), CHANNEL.CH2.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isCH1Selected && !isCH2Selected && isCH3Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH1.toString(), CHANNEL.CH3.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isAudioInputSelected && isCH1Selected && !isCH3Selected && !isCH2Selected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH1.toString(), CHANNEL.MIC.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isCH2Selected && isCH3Selected && !isCH1Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH2.toString(), CHANNEL.CH3.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isCH2Selected && isAudioInputSelected && !isCH3Selected && !isCH1Selected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH2.toString(), CHANNEL.MIC.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isCH3Selected && isAudioInputSelected && !isCH2Selected && !isCH1Selected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH3.toString(), CHANNEL.MIC.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isCH1Selected && isCH2Selected && isCH3Selected && !isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH1.toString(), CHANNEL.CH2.toString(), CHANNEL.CH3.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-                    if (scienceLab.isConnected() && isCH1Selected && isCH2Selected && isCH3Selected && isAudioInputSelected && !isXYPlotSelected) {
-                        captureTask = new CaptureTask();
-                        captureTask.execute(CHANNEL.CH1.toString(), CHANNEL.CH2.toString(), CHANNEL.CH3.toString(), CHANNEL.MIC.toString());
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if (scienceLab.isConnected() && isXYPlotSelected) {
-                        xyPlotTask = new XYPlotTask();
-                        xyPlotTask.execute(xyPlotAxis1, xyPlotAxis2);
-                        synchronized (lock) {
-                            try {
-                                lock.wait();
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-
-                    if ((!isInBuiltMicSelected || !isAudioInputSelected) && audioJack != null) {
-                        audioJack.release();
-                        audioJack = null;
                     }
                 }
             }
@@ -471,6 +408,21 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         }
     }
 
+    @SuppressLint("NewApi")
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
+    }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.activity_landscape_menu, menu);
@@ -482,6 +434,8 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         playMenu = menu.findItem(R.id.play_data);
         menu.findItem(R.id.record_pause_data).setVisible(!isPlayingback);
         menu.findItem(R.id.play_data).setVisible(isPlayingback);
+        menu.findItem(R.id.measurements).setChecked(isMeasurementsChecked);
+        menu.findItem(R.id.run_stop).setTitle(isRunning ? R.string.control_stop : R.string.control_run);
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -491,19 +445,25 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
             case android.R.id.home:
                 finish();
                 break;
+            case R.id.run_stop:
+                if (isRunning) {
+                    isRunning = false;
+                    item.setTitle(R.string.control_run);
+                } else {
+                    isRunning = true;
+                    item.setTitle(R.string.control_stop);
+                }
+                break;
             case R.id.record_pause_data:
                 if (isRecording) {
                     isRecording = false;
                     item.setIcon(R.drawable.ic_record_white);
                     CustomSnackBar.showSnackBar(mainLayout,
                             getString(R.string.csv_store_text) + " " + csvLogger.getCurrentFilePath()
-                            , getString(R.string.open), new View.OnClickListener() {
-                                @Override
-                                public void onClick(View view) {
-                                    Intent intent = new Intent(OscilloscopeActivity.this, DataLoggerActivity.class);
-                                    intent.putExtra(DataLoggerActivity.CALLER_ACTIVITY, getResources().getString(R.string.oscilloscope));
-                                    startActivity(intent);
-                                }
+                            , getString(R.string.open), view -> {
+                                Intent intent = new Intent(OscilloscopeActivity.this, DataLoggerActivity.class);
+                                intent.putExtra(DataLoggerActivity.CALLER_ACTIVITY, getResources().getString(R.string.oscilloscope));
+                                startActivity(intent);
                             }, Snackbar.LENGTH_SHORT);
                 } else if (!isRecording && !scienceLab.isConnected()) {
                     CustomSnackBar.showSnackBar(mainLayout, getString(R.string.device_not_connected), null, null, Snackbar.LENGTH_SHORT);
@@ -552,6 +512,21 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
                     playRecordedData();
                 }
                 break;
+            case R.id.auto_scale:
+                if (((isCH1Selected || isCH2Selected || isCH3Selected || isMICSelected) && scienceLab.isConnected()) || isInBuiltMicSelected) {
+                    autoScale();
+                }
+                break;
+            case R.id.measurements:
+                if (!isMeasurementsChecked) {
+                    isMeasurementsChecked = true;
+                    item.setChecked(true);
+                    measurementsList.setVisibility(View.VISIBLE);
+                } else {
+                    isMeasurementsChecked = false;
+                    item.setChecked(false);
+                    measurementsList.setVisibility(View.INVISIBLE);
+                }
             default:
                 break;
         }
@@ -579,77 +554,74 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         playbackTimer.schedule(new TimerTask() {
             @Override
             public void run() {
-                handler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            if (currentPosition < recordedOscilloscopeData.size()) {
-                                OscilloscopeData data = recordedOscilloscopeData.get(currentPosition);
-                                int mode = data.getMode();
-                                List<ILineDataSet> dataSets = new ArrayList<>();
-                                ArrayList<ArrayList<Entry>> entries = new ArrayList<>();
-                                for (int i = 0; i < mode; i++) {
-                                    data = recordedOscilloscopeData.get(currentPosition);
-                                    entries.add(new ArrayList<>());
-                                    String[] xData = data.getDataX().split(" ");
-                                    String[] yData = data.getDataY().split(" ");
-                                    if (!isPlaybackFourierChecked) {
-                                        int n = Math.min(xData.length, yData.length);
-                                        for (int j = 0; j < n; j++) {
-                                            if (xData[j].length() > 0 && yData[j].length() > 0) {
-                                                entries.get(i).add(new Entry(Float.valueOf(xData[j]), Float.valueOf(yData[j])));
-                                            }
+                handler.post(() -> {
+                    try {
+                        if (currentPosition < recordedOscilloscopeData.size()) {
+                            OscilloscopeData data = recordedOscilloscopeData.get(currentPosition);
+                            int mode = data.getMode();
+                            List<ILineDataSet> dataSets = new ArrayList<>();
+                            ArrayList<ArrayList<Entry>> entries = new ArrayList<>();
+                            for (int i = 0; i < mode; i++) {
+                                data = recordedOscilloscopeData.get(currentPosition);
+                                entries.add(new ArrayList<>());
+                                String[] xData = data.getDataX().split(" ");
+                                String[] yData = data.getDataY().split(" ");
+                                if (!isPlaybackFourierChecked) {
+                                    int n = Math.min(xData.length, yData.length);
+                                    for (int j = 0; j < n; j++) {
+                                        if (xData[j].length() > 0 && yData[j].length() > 0) {
+                                            entries.get(i).add(new Entry(Float.parseFloat(xData[j]), Float.parseFloat(yData[j])));
                                         }
-                                        setLeftYAxisScale(16f, -16f);
-                                        setRightYAxisScale(16f, -16f);
-                                        setXAxisScale(data.getTimebase());
-                                    } else {
-                                        Complex[] yComplex = new Complex[yData.length];
-                                        for (int j = 0; j < yData.length; j++) {
-                                            yComplex[j] = Complex.valueOf(Double.valueOf(yData[j]));
-                                        }
-                                        Complex[] fftOut = fft(yComplex);
-                                        int n = fftOut.length;
-                                        double mA = 0;
-                                        double factor = samples * timeGap * 1e-3;
-                                        double mF = (n / 2 - 1) / factor;
-                                        for (int j = 0; j < n / 2; j++) {
-                                            float y = (float) fftOut[j].abs() / samples;
-                                            if (y > mA) {
-                                                mA = y;
-                                            }
-                                            entries.get(i).add(new Entry((float) (j / factor), y));
-                                        }
-                                        setLeftYAxisScale(mA, 0);
-                                        setRightYAxisScale(mA, 0);
-                                        setXAxisScale(mF);
                                     }
-                                    currentPosition++;
-                                    LineDataSet dataSet;
-                                    dataSet = new LineDataSet(entries.get(i), data.getChannel());
-                                    dataSet.setDrawCircles(false);
-                                    dataSet.setColor(channelColors[i]);
-                                    dataSets.add(dataSet);
-                                    ((OscilloscopePlaybackFragment) playbackFragment).setTimeBase(String.valueOf(data.getTimebase()));
+                                    axisScale.setLeftYAxisScale(16f, -16f);
+                                    axisScale.setRightYAxisScale(16f, -16f);
+                                    axisScale.setXAxisScale(data.getTimebase());
+                                } else {
+                                    Complex[] yComplex = new Complex[yData.length];
+                                    for (int j = 0; j < yData.length; j++) {
+                                        yComplex[j] = Complex.valueOf(Double.parseDouble(yData[j]));
+                                    }
+                                    Complex[] fftOut = fft(yComplex);
+                                    int n = fftOut.length;
+                                    double mA = 0;
+                                    double factor = samples * timeGap * 1e-3;
+                                    double mF = (n / 2 - 1) / factor;
+                                    for (int j = 0; j < n / 2; j++) {
+                                        float y = (float) fftOut[j].abs() / samples;
+                                        if (y > mA) {
+                                            mA = y;
+                                        }
+                                        entries.get(i).add(new Entry((float) (j / factor), y));
+                                    }
+                                    axisScale.setLeftYAxisScale(mA, 0);
+                                    axisScale.setRightYAxisScale(mA, 0);
+                                    axisScale.setXAxisScale(mF);
                                 }
-                                LineData lineData = new LineData(dataSets);
-                                mChart.setData(lineData);
-                                mChart.notifyDataSetChanged();
-                                mChart.invalidate();
-                            } else {
-                                playbackTimer.cancel();
-                                playbackTimer = null;
-                                playMenu.setIcon(R.drawable.ic_play_arrow_white_24dp);
-                                currentPosition = 0;
+                                currentPosition++;
+                                LineDataSet dataSet;
+                                dataSet = new LineDataSet(entries.get(i), data.getChannel());
+                                dataSet.setDrawCircles(false);
+                                dataSet.setColor(channelColors[i]);
+                                dataSets.add(dataSet);
+                                ((OscilloscopePlaybackFragment) playbackFragment).setTimeBase(String.valueOf(data.getTimebase()));
                             }
-                        } catch (Exception e) {
-                            if (playbackTimer != null) {
-                                playbackTimer.cancel();
-                                playbackTimer = null;
-                            }
+                            LineData lineData = new LineData(dataSets);
+                            mChart.setData(lineData);
+                            mChart.notifyDataSetChanged();
+                            mChart.invalidate();
+                        } else {
+                            playbackTimer.cancel();
+                            playbackTimer = null;
                             playMenu.setIcon(R.drawable.ic_play_arrow_white_24dp);
                             currentPosition = 0;
                         }
+                    } catch (Exception e) {
+                        if (playbackTimer != null) {
+                            playbackTimer.cancel();
+                            playbackTimer = null;
+                        }
+                        playMenu.setIcon(R.drawable.ic_play_arrow_white_24dp);
+                        currentPosition = 0;
                     }
                 });
 
@@ -664,12 +636,22 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         }
     }
 
+    public void setFourierTransformSelected(boolean isSelected) {
+        isFourierTransformSelected = isSelected;
+
+        if (!isFourierTransformSelected) {
+            axisScale.setXAxisScale(OscilloscopeAxisScale.DEFAULT_X_AXIS_SCALE);
+            axisScale.setLeftYAxisScale(OscilloscopeAxisScale.DEFAULT_Y_AXIS_SCALE);
+            axisScale.setRightYAxisScale(OscilloscopeAxisScale.DEFAULT_Y_AXIS_SCALE);
+        }
+    }
+
     private void logChannelData(String[] channels) {
         long timestamp = System.currentTimeMillis();
         int noOfChannels = channels.length;
         String dateTime = CSVLogger.FILE_NAME_FORMAT.format(new Date(timestamp));
         for (int i = 0; i < noOfChannels; i++) {
-            recordSensorData(new OscilloscopeData(timestamp + i, block, noOfChannels, channels[i], loggingXdata, loggingYdata[i], xAxisScale, lat, lon));
+            recordSensorData(new OscilloscopeData(timestamp + i, block, noOfChannels, channels[i], loggingXdata, loggingYdata[i], axisScale.getXAxisScale(), lat, lon));
             csvLogger.writeCSVFile(
                     new CSVDataLine()
                             .add(timestamp)
@@ -678,7 +660,7 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
                             .add(channels[i])
                             .add(loggingXdata)
                             .add(loggingYdata[i])
-                            .add(xAxisScale)
+                            .add(axisScale.getXAxisScale())
                             .add(lat)
                             .add(lon)
             );
@@ -847,7 +829,12 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         y2.setEnabled(true);
     }
 
-    public void setXAxisScale(double timebase) {
+    public OscilloscopeAxisScale getAxisScale() {
+        return axisScale;
+    }
+
+    @Override
+    public void onXAxisScaleSet(double timebase) {
         x1.setAxisMinimum(0);
         x1.setAxisMaximum((float) timebase);
         if (timebase == 875f)
@@ -860,7 +847,8 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         mChart.invalidate();
     }
 
-    public void setLeftYAxisScale(double upperLimit, double lowerLimit) {
+    @Override
+    public void onLeftYAxisScaleSet(double upperLimit, double lowerLimit) {
         y1.setAxisMaximum((float) upperLimit);
         y1.setAxisMinimum((float) lowerLimit);
         if (upperLimit == 500f)
@@ -871,7 +859,8 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         mChart.invalidate();
     }
 
-    public void setRightYAxisScale(double upperLimit, double lowerLimit) {
+    @Override
+    public void onRightYAxisScaleSet(double upperLimit, double lowerLimit) {
         y2.setAxisMaximum((float) upperLimit);
         y2.setAxisMinimum((float) lowerLimit);
         if (upperLimit == 500f)
@@ -907,20 +896,21 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
             try {
                 double[] xData;
                 double[] yData;
+                double xValue;
                 ArrayList<String[]> yDataString = new ArrayList<>();
                 String[] xDataString = null;
                 maxAmp = 0;
-                scienceLab.captureTraces(4, samples, timeGap, channel, isTriggerSelected, null);
+                scienceLab.captureTraces(4, samples, timeGap, channel, false, null);
                 Thread.sleep((long) (samples * timeGap * 1e-3));
                 for (int i = 0; i < noOfChannels; i++) {
                     entries.add(new ArrayList<>());
                     channel = channels[i];
+                    isTriggered = false;
                     HashMap<String, double[]> data;
-                    if (triggerChannel.equals(channel))
-                        scienceLab.configureTrigger(channelIndexMap.get(channel), channel, trigger, null, null);
                     data = scienceLab.fetchTrace(channelIndexMap.get(channel));
                     xData = data.get("x");
                     yData = data.get("y");
+                    xValue = xData[0];
                     int n = Math.min(xData.length, yData.length);
                     xDataString = new String[n];
                     yDataString.add(new String[n]);
@@ -935,10 +925,34 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
                     double factor = samples * timeGap * 1e-3;
                     maxFreq = (n / 2 - 1) / factor;
                     double mA = 0;
+                    double prevY = yData[0];
+                    boolean increasing = false;
                     for (int j = 0; j < n; j++) {
+                        double currY = yData[j];
                         xData[j] = xData[j] / ((timebase == 875) ? 1 : 1000);
                         if (!isFourierTransformSelected) {
-                            entries.get(i).add(new Entry((float) xData[j], (float) yData[j]));
+                            if (isTriggerSelected && triggerChannel.equals(channel)) {
+                                if (currY > prevY) {
+                                    increasing = true;
+                                } else if (currY < prevY && increasing) {
+                                    increasing = false;
+                                }
+                                if (isTriggered) {
+                                    double k = xValue / ((timebase == 875) ? 1 : 1000);
+                                    entries.get(i).add(new Entry((float) k, (float) yData[j]));
+                                    xValue += timeGap;
+                                }
+                                if (Objects.equals(triggerMode, MODE.RISING.toString()) && prevY < trigger && currY >= trigger && increasing) {
+                                    isTriggered = true;
+                                } else if (Objects.equals(triggerMode, MODE.FALLING.toString()) && prevY > trigger && currY <= trigger && !increasing) {
+                                    isTriggered = true;
+                                } else if (Objects.equals(triggerMode, MODE.DUAL.toString()) && ((prevY < trigger && currY >= trigger && increasing) || (prevY > trigger && currY <= trigger && !increasing))) {
+                                    isTriggered = true;
+                                }
+                                prevY = currY;
+                            } else {
+                                entries.get(i).add(new Entry((float) xData[j], (float) yData[j]));
+                            }
                         } else {
                             if (j < n / 2) {
                                 float y = (float) fftOut[j].abs() / samples;
@@ -1003,6 +1017,7 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
 
                 if (isInBuiltMicSelected) {
                     noOfChannels++;
+                    isTriggered = false;
                     entries.add(new ArrayList<>());
                     if (audioJack == null) {
                         audioJack = new AudioJack("input");
@@ -1026,13 +1041,41 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
                     if (xDataString == null) {
                         xDataString = new String[n];
                     }
+                    float prevY = (float) map(buffer[0], -32768, 32767, -3, 3);
+                    boolean increasing = false;
+                    double xDataPoint = 0;
                     for (int i = 0; i < n; i++) {
+                        float j = (float) (((double) i / SAMPLING_RATE) * 1000000.0);
+                        j = j / ((timebase == 875) ? 1 : 1000);
                         float audioValue = (float) map(buffer[i], -32768, 32767, -3, 3);
+                        float currY = audioValue;
                         if (!isFourierTransformSelected) {
                             if (noOfChannels == 1) {
-                                xDataString[i] = String.valueOf(2.0 * i);
+                                xDataString[i] = String.valueOf(j);
                             }
-                            entries.get(entries.size() - 1).add(new Entry(i, audioValue));
+                            if (isTriggerSelected && triggerChannel.equals(CHANNEL.MIC.toString())) {
+                                if (currY > prevY) {
+                                    increasing = true;
+                                } else if (currY < prevY) {
+                                    increasing = false;
+                                }
+                                if (Objects.equals(triggerMode, MODE.RISING.toString()) && prevY < trigger && currY >= trigger && increasing) {
+                                    isTriggered = true;
+                                } else if (Objects.equals(triggerMode, MODE.FALLING.toString()) && prevY > trigger && currY <= trigger && !increasing) {
+                                    isTriggered = true;
+                                } else if (Objects.equals(triggerMode, MODE.DUAL.toString()) && ((prevY < trigger && currY >= trigger && increasing) || (prevY > trigger && currY <= trigger && !increasing))) {
+                                    isTriggered = true;
+                                }
+                                if (isTriggered) {
+                                    float k = (float) ((xDataPoint / SAMPLING_RATE) * 1000000.0);
+                                    k = k / ((timebase == 875) ? 1 : 1000);
+                                    entries.get(entries.size() - 1).add(new Entry(k, audioValue));
+                                    xDataPoint++;
+                                }
+                                prevY = currY;
+                            } else {
+                                entries.get(entries.size() - 1).add(new Entry(j, audioValue));
+                            }
                         } else {
                             if (i < n / 2) {
                                 float y = (float) fftOut[i].abs() / samples;
@@ -1054,12 +1097,7 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
                     for (int i = 0; i < yDataString.size(); i++) {
                         loggingYdata[i] = StringUtils.join(" ", yDataString.get(i));
                     }
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            logChannelData(paramsChannels);
-                        }
-                    });
+                    runOnUiThread(() -> logChannelData(paramsChannels));
                 }
 
             } catch (NullPointerException e) {
@@ -1074,8 +1112,68 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
         @Override
         protected void onPostExecute(Void aVoid) {
             super.onPostExecute(aVoid);
+            dataEntries = new ArrayList<>(entries);
+            dataParamsChannels = paramsChannels.clone();
 
             List<ILineDataSet> dataSets = new ArrayList<>();
+            if (!isFourierTransformSelected) {
+                for (int i = 0; i < Math.min(entries.size(), paramsChannels.length); i++) {
+                    ArrayList<Entry> entryArrayList = entries.get(i);
+                    for (int j = 0; j < entryArrayList.size(); j++) {
+                        Entry entry = entryArrayList.get(j);
+                        entry.setX((float) (entry.getX() - xOffsets.get(paramsChannels[i])));
+                        entry.setY((float) (entry.getY() + yOffsets.get(paramsChannels[i])));
+                    }
+                }
+            }
+
+            if (!isFourierTransformSelected) {
+                for (int i = 0; i < Math.min(entries.size(), paramsChannels.length); i++) {
+                    CHANNEL channel = CHANNEL.valueOf(paramsChannels[i]);
+                    double minY;
+                    double maxY;
+                    double yRange;
+                    double[] voltage = new double[512];
+                    ArrayList<Entry> entryArrayList = dataEntries.get(i);
+
+                    if (entryArrayList.isEmpty()) {
+                        minY = 0;
+                        maxY = 0;
+                    } else {
+                        minY = Double.MAX_VALUE;
+                        maxY = -1 * Double.MAX_VALUE;
+
+                        for (int j = 0; j < entryArrayList.size(); j++) {
+                            Entry entry = entryArrayList.get(j);
+                            float y = entry.getY();
+                            if (j < voltage.length - 1) {
+                                voltage[j] = y;
+                            }
+                            if (y > maxY) {
+                                maxY = y;
+                            }
+                            if (y < minY) {
+                                minY = y;
+                            }
+                        }
+                    }
+
+                    final double frequency;
+                    if (Objects.equals(dataParamsChannels[i], CHANNEL.MIC.toString())) {
+                        frequency = analyticsClass.findFrequency(voltage, ((double) 1 / SAMPLING_RATE));
+                    } else {
+                        frequency = analyticsClass.findFrequency(voltage, timeGap / 1000000.0);
+                    }
+                    double period = (1 / frequency) * 1000.0;
+                    yRange = maxY - minY;
+                    OscilloscopeMeasurements.channel.get(channel).put(ChannelMeasurements.FREQUENCY, frequency);
+                    OscilloscopeMeasurements.channel.get(channel).put(ChannelMeasurements.PERIOD, period);
+                    OscilloscopeMeasurements.channel.get(channel).put(ChannelMeasurements.AMPLITUDE, yRange);
+                    OscilloscopeMeasurements.channel.get(channel).put(ChannelMeasurements.POSITIVE_PEAK, maxY);
+                    OscilloscopeMeasurements.channel.get(channel).put(ChannelMeasurements.NEGATIVE_PEAK, minY);
+                }
+            }
+
             for (int i = 0; i < Math.min(entries.size(), paramsChannels.length); i++) {
                 LineDataSet dataSet;
                 dataSet = new LineDataSet(entries.get(i), paramsChannels[i]);
@@ -1092,14 +1190,17 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
                 dataSets.add(dataSet);
             }
             LineData data = new LineData(dataSets);
-            if (!isFourierTransformSelected) {
-                setXAxisScale(xAxisScale);
-                setLeftYAxisScale(16, -16);
-                setRightYAxisScale(16, -16);
-            } else {
-                setXAxisScale(maxFreq);
-                setLeftYAxisScale(maxAmp, 0);
-                setRightYAxisScale(maxAmp, 0);
+            if (isFourierTransformSelected) {
+                axisScale.setXAxisScale(maxFreq);
+                axisScale.setLeftYAxisScale(maxAmp, 0);
+                axisScale.setRightYAxisScale(maxAmp, 0);
+            }
+            if (isMeasurementsChecked) {
+                RecyclerView.LayoutManager layoutManager = new LinearLayoutManager(OscilloscopeActivity.this);
+                measurementsList.setItemAnimator(new DefaultItemAnimator());
+                measurementsList.setLayoutManager(layoutManager);
+                OscilloscopeMeasurementsAdapter adapter = new OscilloscopeMeasurementsAdapter(dataParamsChannels, channelColors);
+                measurementsList.setAdapter(adapter);
             }
             mChart.setData(data);
             mChart.notifyDataSetChanged();
@@ -1107,6 +1208,61 @@ public class OscilloscopeActivity extends GuideActivity implements View.OnClickL
             synchronized (lock) {
                 lock.notify();
             }
+        }
+    }
+
+    public void autoScale() {
+        double minY = Double.MAX_VALUE;
+        double maxY = Double.MIN_VALUE;
+        double maxPeriod = -1 * Double.MIN_VALUE;
+        double yRange;
+        double yPadding;
+        double[] voltage = new double[512];
+        for (int i = 0; i < dataParamsChannels.length; i++) {
+            if (dataEntries.size() > i) {
+                ArrayList<Entry> entryArrayList = dataEntries.get(i);
+                for (int j = 0; j < entryArrayList.size(); j++) {
+                    Entry entry = entryArrayList.get(j);
+                    if (j < voltage.length - 1) {
+                        voltage[j] = entry.getY();
+                    }
+                    if (entry.getY() > maxY) {
+                        maxY = entry.getY();
+                    }
+                    if (entry.getY() < minY) {
+                        minY = entry.getY();
+                    }
+                }
+                final double frequency;
+                if (Objects.equals(dataParamsChannels[i], CHANNEL.MIC.toString())) {
+                    frequency = analyticsClass.findSignalFrequency(voltage, ((double) 1 / SAMPLING_RATE));
+                } else {
+                    frequency = analyticsClass.findSignalFrequency(voltage, timeGap / 1000000.0);
+                }
+                double period = (1 / frequency) * 1000.0;
+                if (period > maxPeriod) {
+                    maxPeriod = period;
+                }
+            }
+        }
+        yRange = maxY - minY;
+        yPadding = yRange * 0.1;
+        if (maxPeriod > 0) {
+            double xAxisScale = Math.min((maxPeriod * 5), maxTimebase);
+            double yAxisScale;
+            if (Math.abs(maxY) >= Math.abs(minY)) {
+                yAxisScale = maxY + yPadding;
+            } else {
+                yAxisScale = -1 * (minY - yPadding);
+            }
+            samples = 512;
+            timeGap = (2 * xAxisScale * 1000.0) / samples;
+
+            axisScale.setXAxisScale(xAxisScale);
+            axisScale.setLeftYAxisScale(yAxisScale);
+            axisScale.setRightYAxisScale(yAxisScale);
+        } else {
+            Toast.makeText(this, getString(R.string.auto_scale_error), Toast.LENGTH_SHORT).show();
         }
     }
 

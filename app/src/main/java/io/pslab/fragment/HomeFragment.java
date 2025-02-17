@@ -22,13 +22,19 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
+import com.google.android.material.snackbar.Snackbar;
+
 import java.io.IOException;
+import java.util.Objects;
 
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.Unbinder;
 import io.pslab.R;
+import io.pslab.activity.MainActivity;
+import io.pslab.others.CustomSnackBar;
 import io.pslab.others.InitializationVariable;
+import io.pslab.others.PSLabPermission;
 import io.pslab.others.ScienceLabCommon;
 
 public class HomeFragment extends Fragment {
@@ -61,6 +67,7 @@ public class HomeFragment extends Fragment {
     TextView bluetoothWifiOption;
     private boolean deviceFound = false, deviceConnected = false;
     private Unbinder unbinder;
+    private PSLabPermission psLabPermission;
 
     public static HomeFragment newInstance(boolean deviceConnected, boolean deviceFound) {
         HomeFragment homeFragment = new HomeFragment();
@@ -75,10 +82,8 @@ public class HomeFragment extends Fragment {
         if (booleanVariable == null) {
             booleanVariable = new InitializationVariable();
         }
-        if (scienceLab.calibrated)
-            booleanVariable.setVariable(true);
-        else
-            booleanVariable.setVariable(false);
+        booleanVariable.setVariable(true);
+        psLabPermission = PSLabPermission.getInstance();
     }
 
     @Nullable
@@ -100,11 +105,27 @@ public class HomeFragment extends Fragment {
             }
             imgViewDeviceStatus.setImageResource(R.drawable.icons8_usb_connected_100);
             tvDeviceStatus.setText(getString(R.string.device_connected_successfully));
-        } else {
+        }
+        else if (!deviceFound && deviceConnected) {
+            tvConnectMsg.setVisibility(View.GONE);
+            try {
+                tvVersion.setText(scienceLab.getVersion());
+                tvVersion.setVisibility(View.VISIBLE);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            imgViewDeviceStatus.setImageResource(R.drawable.icons8_wifi_connected_100);
+            tvDeviceStatus.setText(getString(R.string.device_connected_successfully));
+            requireActivity().invalidateOptionsMenu();
+            CustomSnackBar.showSnackBar(requireActivity().findViewById(android.R.id.content),
+                    getString(R.string.device_connected_successfully), null, null, Snackbar.LENGTH_SHORT);
+        }
+        else {
             imgViewDeviceStatus.setImageResource(R.drawable.icons_usb_disconnected_100);
             tvDeviceStatus.setText(getString(R.string.device_not_found));
         }
 
+        psLabPermission.checkPermissions(requireActivity(), PSLabPermission.BLUETOOTH_PERMISSION);
         /*
          * The null-checks in the OnClickListener may seem unnecessary, but even though the
          * respective variables are initialized before the setter is called, they may contain null

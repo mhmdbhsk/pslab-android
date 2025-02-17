@@ -1,17 +1,17 @@
 package io.pslab.activity;
 
+import static io.pslab.others.ScienceLabCommon.isWifiConnected;
 import static io.pslab.others.ScienceLabCommon.scienceLab;
 
-import android.Manifest;
 import android.app.PendingIntent;
 import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageManager;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
@@ -21,20 +21,20 @@ import android.view.MenuItem;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.ActionBarDrawerToggle;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.browser.customtabs.CustomTabsServiceConnection;
-import androidx.core.app.ActivityCompat;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentTransaction;
 
+import com.google.android.gms.oss.licenses.OssLicensesMenuActivity;
 import com.google.android.material.navigation.NavigationView;
 import com.google.android.material.snackbar.Snackbar;
 
@@ -57,6 +57,7 @@ import io.pslab.others.CustomTabService;
 import io.pslab.others.InitializationVariable;
 import io.pslab.others.ScienceLabCommon;
 import io.pslab.receivers.USBDetachReceiver;
+import io.pslab.receivers.WifiDisconnectReceiver;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -80,8 +81,6 @@ public class MainActivity extends AppCompatActivity {
     private CustomTabsServiceConnection customTabsServiceConnection;
 
     public static int navItemIndex = 0;
-
-    int PERMISSION_ID = 44;
 
     private static final String TAG_DEVICE = "device";
     private static final String TAG_INSTRUMENTS = "instruments";
@@ -108,6 +107,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String ACTION_USB_PERMISSION = "com.android.example.USB_PERMISSION";
     private static final int TIME_INTERVAL = 2000;
     private long mBackPressed;
+    private static MainActivity instance;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -139,6 +139,11 @@ public class MainActivity extends AppCompatActivity {
         usbDetachReceiver = new USBDetachReceiver(this);
         registerReceiver(usbDetachReceiver, usbDetachFilter);
 
+        IntentFilter wifiDisconnectFilter = new IntentFilter();
+        wifiDisconnectFilter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
+        WifiDisconnectReceiver wifiDisconnectReceiver = new WifiDisconnectReceiver(this);
+        registerReceiver(wifiDisconnectReceiver, wifiDisconnectFilter);
+
         setSupportActionBar(toolbar);
         mHandler = new Handler();
 
@@ -157,33 +162,7 @@ public class MainActivity extends AppCompatActivity {
             CURRENT_TAG = TAG_INSTRUMENTS;
             loadHomeFragment();
         }
-        
-        checkPermissions();
-    }
-
-    private void checkPermissions() {
-        if(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            //Permission granted
-        } else {
-            requestLocationPermissions();
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_ID && grantResults[0] == PackageManager.PERMISSION_GRANTED && grantResults[1] == PackageManager.PERMISSION_GRANTED) {
-            //Permission granted
-        } else {
-            Toast.makeText(this, "This app requires permission to access your location.", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void requestLocationPermissions() {
-        ActivityCompat.requestPermissions(this, new String[]{
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-        }, PERMISSION_ID);
+        instance = this;
     }
 
     private void loadHomeFragment() {
@@ -216,6 +195,10 @@ public class MainActivity extends AppCompatActivity {
             drawer.closeDrawers();
             invalidateOptionsMenu();
         }
+    }
+
+    public static MainActivity getInstance() {
+        return instance;
     }
 
     private Fragment getHomeFragment() throws IOException {
@@ -299,6 +282,12 @@ public class MainActivity extends AppCompatActivity {
                         navItemIndex = 5;
                         CURRENT_TAG = TAG_ABOUTUS;
                         break;
+                    case R.id.nav_documentation:
+                        customTabService.launchUrl("https://docs.pslab.io/");
+                        if (drawer != null) {
+                            drawer.closeDrawers();
+                        }
+                        break;
                     case R.id.nav_rate:
                         customTabService.launchUrl("https://play.google.com/store/apps/details?id=io.pslab");
                         if (drawer != null) {
@@ -344,6 +333,10 @@ public class MainActivity extends AppCompatActivity {
                             drawer.closeDrawers();
                         }
                         break;
+                    case R.id.nav_third_party_libs:
+                        OssLicensesMenuActivity.setActivityTitle(getString(R.string.third_party_libs));
+                        startActivity(new Intent(MainActivity.this, OssLicensesMenuActivity.class));
+                        break;
                     default:
                         navItemIndex = 0;
                 }
@@ -375,6 +368,17 @@ public class MainActivity extends AppCompatActivity {
         } catch (IOException e) {
             txtName.setText(getString(R.string.device_not_found));
         }
+    }
+
+    public void showFirmwareDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(R.string.legacy_title);
+        builder.setCancelable(false);
+        builder.setMessage(R.string.legacy_message);
+        builder.setIcon(android.R.drawable.ic_dialog_alert);
+        builder.setPositiveButton("OK", (dialog, which) -> dialog.dismiss());
+        builder.create().show();
+
     }
 
     @Override
@@ -418,7 +422,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
-            case R.id.menu_pslab_connected:
+            case R.id.menu_wifi_connected, R.id.menu_pslab_connected:
                 CustomSnackBar.showSnackBar(findViewById(android.R.id.content),
                         getString(R.string.device_connected_successfully), null, null, Snackbar.LENGTH_SHORT);
                 break;
@@ -481,7 +485,7 @@ public class MainActivity extends AppCompatActivity {
     private void attemptToGetUSBPermission() {
         if (!("android.hardware.usb.action.USB_DEVICE_ATTACHED".equals(getIntent().getAction()))) {
             if (communicationHandler.isDeviceFound() && !usbManager.hasPermission(communicationHandler.mUsbDevice)) {
-                mPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), 0);
+                mPermissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE);
                 IntentFilter filter = new IntentFilter(ACTION_USB_PERMISSION);
                 registerReceiver(mUsbReceiver, filter);
                 receiverRegister = true;
@@ -500,8 +504,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-        menu.getItem(0).setVisible(PSLabisConnected);
-        menu.getItem(1).setVisible(!PSLabisConnected);
+        menu.getItem(0).setVisible(isWifiConnected);
+        menu.getItem(1).setVisible(PSLabisConnected);
+        menu.getItem(2).setVisible(!PSLabisConnected && !isWifiConnected);
         setPSLabVersionIDs();
         return true;
     }
@@ -539,7 +544,7 @@ public class MainActivity extends AppCompatActivity {
                                     getString(R.string.device_connected_successfully), null, null, Snackbar.LENGTH_SHORT);
                             if (navItemIndex == 0) {
                                 getSupportFragmentManager().beginTransaction().replace(R.id.frame, InstrumentsFragment.newInstance()).commit();
-                            } else if (navItemIndex == 1) {
+                            } else if (navItemIndex == 2) {
                                 getSupportFragmentManager().beginTransaction().replace(R.id.frame, HomeFragment.newInstance(true, true)).commitAllowingStateLoss();
                             } else {
                                 CustomSnackBar.showSnackBar(findViewById(android.R.id.content),
@@ -569,7 +574,7 @@ public class MainActivity extends AppCompatActivity {
                 invalidateOptionsMenu();
                 if (navItemIndex == 0) {
                     getSupportFragmentManager().beginTransaction().replace(R.id.frame, InstrumentsFragment.newInstance()).commit();
-                } else if (navItemIndex == 1) {
+                } else if (navItemIndex == 2) {
                     getSupportFragmentManager().beginTransaction().replace(R.id.frame, HomeFragment.newInstance(true, true)).commitAllowingStateLoss();
                 }
                 CustomSnackBar.showSnackBar(findViewById(android.R.id.content),

@@ -1,5 +1,6 @@
 package io.pslab.communication.digitalChannel;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 
@@ -15,6 +16,7 @@ public class DigitalChannel {
     private static final int EVERY_FOURTH_RISING_EDGE = 4;
     private static final int EVERY_RISING_EDGE = 3;
     private static final int EVERY_FALLING_EDGE = 2;
+    private static final int CAPTURE_DELAY = 2;
     public static String[] digitalChannelNames = {"LA1", "LA2", "LA3", "LA4", "RES", "EXT", "FRQ"};
     public String channelName, dataType;
     public int initialStateOverride, channelNumber, length, prescalar, trigger, dlength, plotLength, maxTime, mode;
@@ -60,27 +62,26 @@ public class DigitalChannel {
             this.initialState = s != null && s == 1;
         }
         System.arraycopy(timestamps, 0, this.timestamps, 0, timestamps.length);
-        this.dlength = timestamps.length; //
-        double factor;
-        switch (prescalar) {
-            case 0:
-                factor = 64;
-                break;
-            case 1:
-                factor = 8;
-                break;
-            case 2:
-                factor = 4;
-                break;
-            default:
-                factor = 1;
+        this.dlength = timestamps.length;
+        double factor = 64;
+        ArrayList<Double> diff = new ArrayList<>();
+        for (int i = 0; i < this.timestamps.length - 1; i++) {
+            diff.add(this.timestamps[i + 1] - this.timestamps[i]);
         }
-        for (int i = 0; i < this.timestamps.length; i++) this.timestamps[i] /= factor;
+        for (int i = 0; i < diff.size(); i++) {
+            if (diff.get(i) < 0) {  // Counter has rolled over.
+                for (int j = i + 1; j < this.timestamps.length; j++) {
+                    this.timestamps[j] += (1 << 16) - 1;
+                }
+            }
+        }
+        for (int i = 0; i < this.timestamps.length; i++) {
+            this.timestamps[i] = (this.timestamps[i] + (i * CAPTURE_DELAY)) / factor;
+        }
         if (dlength > 0)
             this.maxT = this.timestamps[this.timestamps.length - 1];
         else
             this.maxT = 0;
-
     }
 
     public void generateAxes() {
